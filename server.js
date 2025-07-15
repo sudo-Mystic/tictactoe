@@ -6,7 +6,7 @@ const port = 3000;
 
 // Configure CORS to allow requests from http://localhost:3001
 app.use(cors({
-  origin: 'https://tictactoe-websocket.onrender.com',
+  origin: 'https://tictactoe-z9fb.onrender.com',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'] // Allow common headers
 }));
@@ -23,7 +23,7 @@ const wss = new WebSocket.Server({
   server,
   verifyClient: function(info, done) {
     // Allow connections from both http://localhost:3000 and http://localhost:3001
-    if (info.origin !== 'https://preview-tic-tac-toe-server-kzmlub5ez6xif72675ny.vusercontent.net' && info.origin !== 'https://tictactoe-websocket.onrender.com') {
+    if (info.origin !== 'https://preview-tic-tac-toe-server-kzmlub5ez6xif72675ny.vusercontent.net' && info.origin !== 'https://tictactoe-z9fb.onrender.com') {
       console.log('WebSocket connection rejected from origin:', info.origin);
       done(false); // Reject the connection
     } else {

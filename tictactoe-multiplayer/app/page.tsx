@@ -45,7 +45,7 @@ export default function TicTacToePage() {
 
   const connectWebSocket = () => {
     setConnectionStatus("connecting")
-    const websocket = new WebSocket("ws://tictactoe-websocket.onrender.com")
+    const websocket = new WebSocket("ws://tictactoe-z9fb.onrender.com")
 
     websocket.onopen = () => {
       setConnectionStatus("connected")
