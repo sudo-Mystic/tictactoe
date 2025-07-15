@@ -23,7 +23,7 @@ const wss = new WebSocket.Server({
   server,
   verifyClient: function(info, done) {
     // Allow connections from both http://localhost:3000 and http://localhost:3001
-    if (info.origin !== 'https://preview-tic-tac-toe-server-kzmlub5ez6xif72675ny.vusercontent.net' && info.origin !== 'https://tictactoe-ws.vercel.app/') {
+    if (info.origin !== 'https://preview-tic-tac-toe-server-kzmlub5ez6xif72675ny.vusercontent.net' && info.origin !== 'https://tictactoe-ws.vercel.app/' && info.origin !== 'https://tictactoe-z9fb.onrender.com') {
       console.log('WebSocket connection rejected from origin:', info.origin);
       done(false); // Reject the connection
     } else {
