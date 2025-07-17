@@ -1,37 +1,67 @@
 const express = require('express');
-const cors = require('cors'); // Require the cors package
+const cors = require('cors');
 const app = express();
 const WebSocket = require('ws');
-const port = 3000;
+const http = require('http'); // Import the http module
 
-// Configure CORS to allow requests from http://localhost:3001
+const port = process.env.PORT || 3000; // Use Render's port
+
+// --- CORS Configuration for HTTP requests (like health checks) ---
+// This does NOT affect the WebSocket connection itself.
 app.use(cors({
-  origin: 'https://tictactoe-ws.vercel.app/',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'] // Allow common headers
+  origin: 'https://tictactoe-ws.vercel.app', // Your frontend URL
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// --- A Basic Health Check Route for Render ---
 app.get('/', (req, res) => {
-  res.send('Hello World!');
+  res.status(200).send('Server is running and healthy.');
 });
 
-const server = app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
-});
+// --- Create HTTP server and attach Express app ---
+const server = http.createServer(app);
 
+// --- WebSocket Server Setup ---
 const wss = new WebSocket.Server({
-  server,
-  verifyClient: function(info, done) {
-    // Allow connections from both http://localhost:3000 and http://localhost:3001
-    if (info.origin !== 'https://preview-tic-tac-toe-server-kzmlub5ez6xif72675ny.vusercontent.net' && info.origin !== 'https://tictactoe-ws.vercel.app/' && info.origin !== 'https://tictactoe-z9fb.onrender.com') {
-      console.log('WebSocket connection rejected from origin:', info.origin);
-      done(false); // Reject the connection
-    } else {
-      console.log('WebSocket connection accepted from origin:', info.origin);
-      done(true); // Accept the connection
-    }
-  }
+    // We no longer attach the WebSocket server directly to the Express server.
+    // Instead, we handle the upgrade manually for better control.
+    noServer: true
 });
+
+
+// --- Manually Handle the HTTP 'upgrade' event for WebSockets ---
+// This is the modern and recommended way to handle WebSocket connections.
+server.on('upgrade', (request, socket, head) => {
+    // Define your list of allowed origins
+    const allowedOrigins = [
+        'https://tictactoe-ws.vercel.app',
+        'https://preview-tic-tac-toe-server-kzmlub5ez6xif72675ny.vusercontent.net', // Keep if you use this for previews
+        'https://tictactoe-z9fb.onrender.com' // Your backend's own origin
+    ];
+
+    const origin = request.headers.origin;
+
+    if (allowedOrigins.includes(origin)) {
+        // If the origin is allowed, complete the WebSocket handshake
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
+    } else {
+        // If the origin is not allowed, destroy the socket to reject the connection
+        console.log(`Connection from origin ${origin} rejected.`);
+        socket.destroy();
+    }
+});
+
+
+// --- Start the HTTP Server ---
+server.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
+
+
+// --- Game Logic (No changes needed here) ---
 
 // Game state structure
 const games = new Map(); // Map to store active games: { roomCode: { board: [], players: [], turn: '', winner: null, draw: false } }
@@ -97,12 +127,13 @@ function makeMove(roomCode, playerWs, index) {
       game.winner = currentPlayer.symbol;
       broadcastGameState(roomCode);
       console.log(`Player ${currentPlayer.symbol} won in game ${roomCode}!`);
-      endGame(roomCode);
+      // Delay ending the game so the final state can be seen by clients
+      setTimeout(() => endGame(roomCode), 2000);
     } else if (checkDraw(game.board)) {
       game.draw = true;
       broadcastGameState(roomCode);
       console.log(`Game ${roomCode} is a draw!`);
-      endGame(roomCode);
+      setTimeout(() => endGame(roomCode), 2000);
     } else {
       game.turn = (game.turn === 'X' ? 'O' : 'X');
       broadcastGameState(roomCode);
@@ -139,7 +170,8 @@ function broadcastGameState(roomCode) {
       board: game.board,
       turn: game.turn,
       winner: game.winner,
-      draw: game.draw
+      draw: game.draw,
+      playerCount: game.playerCount
     };
     game.players.forEach(player => {
       if (player.ws.readyState === WebSocket.OPEN) {
@@ -151,8 +183,17 @@ function broadcastGameState(roomCode) {
 
 // Function to end the game and clean up resources
 function endGame(roomCode) {
-    games.delete(roomCode);
-    console.log(`Game ${roomCode} ended and removed.`);
+    const game = games.get(roomCode);
+    if(game) {
+        // Close connections for players in the ended game
+        game.players.forEach(player => {
+            if (player.ws.readyState === WebSocket.OPEN) {
+                player.ws.close(1000, "Game Over");
+            }
+        });
+        games.delete(roomCode);
+        console.log(`Game ${roomCode} ended and removed.`);
+    }
 }
 
 
@@ -186,18 +227,32 @@ wss.on('connection', ws => {
 
   ws.on('close', () => {
     console.log('Client disconnected');
-    // Handle player disconnection (e.g., remove from game, notify other player)
-    games.forEach((game, roomCode) => {
-        game.players = game.players.filter(player => player.ws !== ws);
-        if (game.players.length === 0) {
-            games.delete(roomCode);
-            console.log(`Game ${roomCode} removed due to no players.`);
-        } else if (game.players.length === 1) {
-            // Notify remaining player that opponent left
-            game.players[0].ws.send(JSON.stringify({ type: 'opponent_disconnected', message: 'Your opponent has disconnected.' }));
-            games.delete(roomCode); // Immediately remove game if one player leaves
-            console.log(`Game ${roomCode} removed due to one player leaving.`);
+    // Find which game the disconnected client was in
+    let affectedRoomCode = null;
+    for (const [roomCode, game] of games.entries()) {
+        const playerIndex = game.players.findIndex(p => p.ws === ws);
+        if (playerIndex !== -1) {
+            affectedRoomCode = roomCode;
+            // Remove the player from the game
+            game.players.splice(playerIndex, 1);
+            game.playerCount--;
+            break;
         }
-    });
+    }
+
+    if (affectedRoomCode) {
+        const game = games.get(affectedRoomCode);
+        // If the game still exists (i.e., wasn't ended by a win/draw)
+        if (game) {
+            if (game.playerCount < 2 && !game.winner && !game.draw) {
+                // If one player is left, notify them and end the game
+                if (game.players.length === 1) {
+                    game.players[0].ws.send(JSON.stringify({ type: 'opponent_disconnected' }));
+                }
+                // Game is over, clean it up
+                endGame(affectedRoomCode);
+            }
+        }
+    }
   });
 });
